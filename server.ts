@@ -509,9 +509,19 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+
+    // Serve static assets dưới prefix /agribank/ (khớp với vite base)
+    app.use("/agribank", express.static(distPath));
+
+    // Fallback: mọi route /agribank/* đều trả index.html (SPA routing)
+    // Đặt SAU các API routes nên không ảnh hưởng /api/*
+    app.get("/agribank/*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
+    });
+
+    // Redirect root về /agribank/
+    app.get("/", (req, res) => {
+      res.redirect("/agribank/");
     });
   }
 
