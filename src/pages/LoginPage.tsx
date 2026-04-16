@@ -4,23 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
 import toast from 'react-hot-toast';
 import { Lock, User, Eye, EyeOff } from 'lucide-react';
-
-const Logo = ({ className = "w-10 h-10" }) => (
-  <div className={`relative ${className} bg-agribank-maroon rounded-2xl flex items-center justify-center overflow-hidden border-2 border-white/20 shadow-xl`}>
-    <div className="absolute inset-0 flex items-center justify-center">
-      <div className="w-full h-full grid grid-cols-2 grid-rows-2">
-        <div className="bg-agribank-green"></div>
-        <div className="bg-agribank-maroon"></div>
-        <div className="bg-agribank-maroon"></div>
-        <div className="bg-agribank-green"></div>
-      </div>
-    </div>
-    <div className="relative z-10 w-2/3 h-2/3 flex items-center justify-center">
-      <div className="w-1.5 h-full bg-agribank-gold rotate-45 rounded-full shadow-sm"></div>
-      <div className="absolute w-full h-1.5 bg-agribank-gold -rotate-45 rounded-full shadow-sm"></div>
-    </div>
-  </div>
-);
+import logo from '../assets/logo-agribank.jpg';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -59,7 +43,7 @@ export default function LoginPage() {
             <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white via-transparent to-transparent"></div>
           </div>
           
-          <Logo className="w-20 h-20 mx-auto mb-6" />
+          <img src={logo} alt="Agribank Logo" className="w-20 h-20 mx-auto mb-6 object-contain" />
           <h1 className="text-3xl font-black tracking-tighter">AGRIBANK</h1>
           <p className="text-agribank-gold font-bold text-xs uppercase tracking-[0.2em] mt-2 opacity-90">Phú Yên - Quản lý Thuế TNCN</p>
         </div>

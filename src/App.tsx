@@ -21,22 +21,10 @@ import IncomePage from './pages/IncomePage';
 import ExportPage from './pages/ExportPage';
 import ConfigPage from './pages/ConfigPage';
 import EmployeePage from './pages/EmployeePage';
+import logo from './assets/logo-agribank.jpg';
 
 const Logo = ({ className = "w-10 h-10" }) => (
-  <div className={`relative ${className} bg-agribank-maroon rounded-lg flex items-center justify-center overflow-hidden border-2 border-white/20`}>
-    <div className="absolute inset-0 flex items-center justify-center">
-      <div className="w-full h-full grid grid-cols-2 grid-rows-2">
-        <div className="bg-agribank-green"></div>
-        <div className="bg-agribank-maroon"></div>
-        <div className="bg-agribank-maroon"></div>
-        <div className="bg-agribank-green"></div>
-      </div>
-    </div>
-    <div className="relative z-10 w-2/3 h-2/3 flex items-center justify-center">
-      <div className="w-1 h-full bg-agribank-gold rotate-45 rounded-full shadow-sm"></div>
-      <div className="absolute w-full h-1 bg-agribank-gold -rotate-45 rounded-full shadow-sm"></div>
-    </div>
-  </div>
+  <img src={logo} alt="Agribank Logo" className={`${className} object-contain`} />
 );
 
 const SidebarItem = ({ to, icon: Icon, label, active }: any) => (
