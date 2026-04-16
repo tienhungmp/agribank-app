@@ -45,53 +45,93 @@ const KPICard = ({ title, value, icon: Icon, color, trend }: any) => (
 export default function DashboardPage() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+  const [year, setYear] = useState(new Date().getFullYear());
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const res = await api.get('/tax/summary', { params: { month: new Date().getMonth() + 1, year: new Date().getFullYear() } });
-        setData(res.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchData();
-  }, []);
+  }, [month, year]);
 
-  const totalIncome = data.reduce((acc, curr) => acc + curr.totalGross, 0);
-  const totalTax = data.reduce((acc, curr) => acc + curr.taxAmount, 0);
-  const totalEmployees = data.length;
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/tax/summary', { params: { month, year } });
+      setData(res.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const branchData = [
-    { name: '4600', value: 450 },
-    { name: '4601', value: 320 },
-    { name: '4602', value: 280 },
-    { name: '4603', value: 310 },
-    { name: '4604', value: 190 },
-    { name: '4605', value: 240 },
-  ];
+  const totalIncome = Array.isArray(data) ? data.reduce((acc, curr) => acc + curr.totalGross, 0) : 0;
+  const totalTax = Array.isArray(data) ? data.reduce((acc, curr) => acc + curr.taxAmount, 0) : 0;
+  const totalEmployees = Array.isArray(data) ? data.length : 0;
+  const totalSources = Array.isArray(data) ? Array.from(new Set(data.flatMap(d => d.sources || []))).length : 0;
+
+  // Dynamic Branch Data
+  const branchMap: any = {};
+  if (Array.isArray(data)) {
+    data.forEach(d => {
+      branchMap[d.branchCode] = (branchMap[d.branchCode] || 0) + (d.totalGross / 1000000); // In millions
+    });
+  }
+  const branchData = Object.entries(branchMap).map(([name, value]) => ({ name, value: Math.round(value as number) }));
+
+  // Dynamic Income Structure
+  const incomeStructure = Array.isArray(data) ? [
+    { name: 'Lương V1', value: data.reduce((acc, curr) => acc + (curr.income['851101'] || 0), 0) },
+    { name: 'Lương V2', value: data.reduce((acc, curr) => acc + (curr.income['851102'] || 0), 0) },
+    { name: 'Năng suất', value: data.reduce((acc, curr) => acc + (curr.income['462001'] || 0), 0) },
+    { name: 'Khen thưởng', value: data.reduce((acc, curr) => acc + (curr.income['484101'] || 0), 0) },
+    { name: 'Khác', value: data.reduce((acc, curr) => acc + (curr.income['OTHER'] || 0) + (curr.income['BAO_NO'] || 0) + (curr.income['BAO_CO'] || 0), 0) },
+  ].filter(i => i.value > 0) : [];
+
+  const totalStructureValue = incomeStructure.reduce((acc, curr) => acc + curr.value, 0);
 
   const COLORS = ['#A61D37', '#005030', '#FFD700', '#4A90E2', '#9013FE', '#50E3C2'];
 
   return (
     <div className="space-y-8">
+      {/* Header Filters */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+        <div>
+          <h2 className="text-2xl font-black text-gray-800 tracking-tight">Bảng điều khiển</h2>
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Tổng quan tình hình thu nhập & Thuế</p>
+        </div>
+        <div className="flex gap-3">
+          <select 
+            className="p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-agribank-maroon font-bold text-xs"
+            value={month}
+            onChange={(e) => setMonth(parseInt(e.target.value))}
+          >
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i+1} value={i+1}>Tháng {i+1}</option>
+            ))}
+          </select>
+          <select 
+            className="p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-agribank-maroon font-bold text-xs"
+            value={year}
+            onChange={(e) => setYear(parseInt(e.target.value))}
+          >
+            {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+      </div>
+
       {/* KPI Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <KPICard 
-          title="Tổng Thu nhập (Tháng)" 
+          title="Tổng Thu nhập" 
           value={formatVND(totalIncome)} 
           icon={DollarSign} 
           color="bg-agribank-maroon" 
-          trend="+12.5%"
         />
         <KPICard 
           title="Tổng Thuế TNCN" 
           value={formatVND(totalTax)} 
           icon={Receipt} 
           color="bg-agribank-green" 
-          trend="+8.2%"
         />
         <KPICard 
           title="Số Cán bộ" 
@@ -100,8 +140,8 @@ export default function DashboardPage() {
           color="bg-blue-500" 
         />
         <KPICard 
-          title="File đã Upload" 
-          value="12" 
+          title="Nguồn Dữ liệu" 
+          value={totalSources} 
           icon={FileUp} 
           color="bg-agribank-gold" 
         />
@@ -112,60 +152,59 @@ export default function DashboardPage() {
         <div className="lg:col-span-2 bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
           <div className="flex items-center justify-between mb-8">
             <h3 className="font-black text-gray-800 tracking-tight text-lg">Thu nhập theo Chi nhánh (Triệu VND)</h3>
-            <select className="text-xs font-bold border-none bg-gray-50 rounded-xl px-4 py-2 outline-none text-gray-500">
-              <option>Tháng này</option>
-              <option>Tháng trước</option>
-            </select>
           </div>
           <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={branchData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94A3B8', fontWeight: 600 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94A3B8', fontWeight: 600 }} />
-                <Tooltip 
-                  cursor={{ fill: '#F8FAFC' }}
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '12px' }}
-                />
-                <Bar dataKey="value" fill="#A61D37" radius={[6, 6, 0, 0]} barSize={40} />
-              </BarChart>
-            </ResponsiveContainer>
+            {branchData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={branchData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94A3B8', fontWeight: 600 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94A3B8', fontWeight: 600 }} />
+                  <Tooltip 
+                    cursor={{ fill: '#F8FAFC' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '12px' }}
+                  />
+                  <Bar dataKey="value" fill="#A61D37" radius={[6, 6, 0, 0]} barSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-400 font-bold italic">Không có dữ liệu biểu đồ</div>
+            )}
           </div>
         </div>
 
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
           <h3 className="font-black text-gray-800 mb-8 tracking-tight text-lg">Cơ cấu Thu nhập</h3>
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={[
-                    { name: 'Lương V1', value: 400 },
-                    { name: 'Lương V2', value: 300 },
-                    { name: 'Năng suất', value: 200 },
-                    { name: 'Khen thưởng', value: 100 },
-                  ]}
-                  innerRadius={70}
-                  outerRadius={90}
-                  paddingAngle={8}
-                  dataKey="value"
-                >
-                  {COLORS.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            {incomeStructure.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={incomeStructure}
+                    innerRadius={70}
+                    outerRadius={90}
+                    paddingAngle={8}
+                    dataKey="value"
+                  >
+                    {incomeStructure.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-400 font-bold italic">Không có dữ liệu</div>
+            )}
           </div>
           <div className="space-y-3 mt-6">
-            {['Lương V1', 'Lương V2', 'Năng suất', 'Khen thưởng'].map((label, i) => (
-              <div key={label} className="flex items-center justify-between text-xs">
+            {incomeStructure.map((item, i) => (
+              <div key={item.name} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: COLORS[i] }}></div>
-                  <span className="text-gray-500 font-bold">{label}</span>
+                  <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
+                  <span className="text-gray-500 font-bold">{item.name}</span>
                 </div>
-                <span className="font-black text-gray-800">{(25 - i * 5)}%</span>
+                <span className="font-black text-gray-800">{Math.round((item.value / totalStructureValue) * 100)}%</span>
               </div>
             ))}
           </div>
@@ -190,7 +229,7 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {data.slice(0, 5).map((row, i) => (
+              {Array.isArray(data) && data.slice(0, 5).map((row, i) => (
                 <tr key={i} className="hover:bg-gray-50/50 transition-colors group">
                   <td className="px-8 py-5">
                     <div className="flex items-center gap-4">

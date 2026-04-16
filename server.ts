@@ -53,6 +53,7 @@ const IncomeTransaction = sequelize.define("IncomeTransaction", {
   month: { type: DataTypes.INTEGER, allowNull: false },
   year: { type: DataTypes.INTEGER, allowNull: false },
   description: { type: DataTypes.TEXT },
+  source: { type: DataTypes.STRING, defaultValue: "Excel Upload" },
 });
 
 const TaxConfig = sequelize.define("TaxConfig", {
@@ -63,6 +64,31 @@ const TaxConfig = sequelize.define("TaxConfig", {
 // --- INITIALIZE DATABASE ---
 async function initDB() {
   await sequelize.sync();
+
+  // Fix for missing 'source' column in IncomeTransactions
+  try {
+    const tableInfo: any = await sequelize.query("PRAGMA table_info(IncomeTransactions)");
+    const hasSource = tableInfo[0].some((col: any) => col.name === 'source');
+    if (!hasSource) {
+      await sequelize.query("ALTER TABLE IncomeTransactions ADD COLUMN source TEXT DEFAULT 'Excel Upload'");
+      console.log("Added missing 'source' column to IncomeTransactions");
+    }
+
+    const empTableInfo: any = await sequelize.query("PRAGMA table_info(Employees)");
+    const hasNumDependents = empTableInfo[0].some((col: any) => col.name === 'numDependents');
+    if (!hasNumDependents) {
+      await sequelize.query("ALTER TABLE Employees ADD COLUMN numDependents INTEGER DEFAULT 0");
+      console.log("Added missing 'numDependents' column to Employees");
+    }
+
+    const hasTaxCode = empTableInfo[0].some((col: any) => col.name === 'taxCode');
+    if (!hasTaxCode) {
+      await sequelize.query("ALTER TABLE Employees ADD COLUMN taxCode TEXT");
+      console.log("Added missing 'taxCode' column to Employees");
+    }
+  } catch (err) {
+    console.error("Error checking/adding 'source' column:", err);
+  }
   
   // Seed Branches
   const branches = [
@@ -151,7 +177,7 @@ function detectAccountType(description: string): string {
 async function startServer() {
   await initDB();
   const app = express();
-  const PORT = 5001;
+  const PORT = 3000;
   const JWT_SECRET = process.env.JWT_SECRET || "agribank_phu_yen_secret_key_2024";
 
   app.use(cors());
@@ -178,35 +204,54 @@ async function startServer() {
 
   // Auth
   app.post("/api/auth/login", async (req, res) => {
-    const { username, password } = req.body;
-    const user: any = await User.findOne({ where: { username } });
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ message: "Sai tài khoản hoặc mật khẩu" });
+    try {
+      const { username, password } = req.body;
+      const user: any = await User.findOne({ where: { username } });
+      if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(401).json({ message: "Sai tài khoản hoặc mật khẩu" });
+      }
+      const token = jwt.sign(
+        { id: user.id, username: user.username, role: user.role, branchCode: user.branchCode, fullName: user.fullName },
+        JWT_SECRET,
+        { expiresIn: "8h" }
+      );
+      res.json({ token, user: { username: user.username, role: user.role, branchCode: user.branchCode, fullName: user.fullName } });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
-    const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role, branchCode: user.branchCode, fullName: user.fullName },
-      JWT_SECRET,
-      { expiresIn: "8h" }
-    );
-    res.json({ token, user: { username: user.username, role: user.role, branchCode: user.branchCode, fullName: user.fullName } });
   });
 
   app.get("/api/auth/me", authenticate, (req: any, res) => {
-    res.json(req.user);
+    try {
+      res.json(req.user);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // Branches
   app.get("/api/branches", authenticate, async (req, res) => {
-    const branches = await Branch.findAll();
-    res.json(branches);
+    try {
+      const branches = await Branch.findAll();
+      res.json(branches);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // Upload
   app.post("/api/upload/excel", authenticate, upload.single("file"), async (req: any, res) => {
-    const { month, year } = req.body;
-    if (!req.file) return res.status(400).json({ message: "Không tìm thấy file" });
-
     try {
+      const { month, year } = req.body;
+      if (!month || !year) return res.status(400).json({ message: "Thiếu thông tin tháng hoặc năm" });
+      
+      const m = parseInt(month);
+      const y = parseInt(year);
+      if (isNaN(m) || isNaN(y)) return res.status(400).json({ message: "Thông tin tháng hoặc năm không hợp lệ" });
+
+      if (!req.file) return res.status(400).json({ message: "Không tìm thấy file" });
+
+      const source = req.file.originalname || "Excel Upload";
       const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
       const data: any[] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: "A" });
@@ -226,31 +271,38 @@ async function startServer() {
         // Skip empty rows
         if (!fullName && !accountNumber) continue;
 
+        if (!fullName) {
+          errorLogs.push(`Dòng lỗi: Thiếu họ tên cho tài khoản ${accountNumber}`);
+          continue;
+        }
+
         if (!accountNumber || accountNumber.length !== 13) {
           errorLogs.push(`Dòng lỗi: Số tài khoản ${accountNumber} không hợp lệ (phải 13 số)`);
           continue;
         }
 
         const accountType = detectAccountType(description);
+        const branchCode = accountNumber.substring(0, 4);
 
         // Update Employee
         await Employee.upsert({
           accountNumber,
           fullName,
-          branchCode: accountNumber.substring(0, 4),
+          branchCode,
           numDependents: npt
         });
 
         // Create Transaction
         await IncomeTransaction.create({
           accountNumber,
-          branchCode: accountNumber.substring(0, 4),
+          branchCode,
           accountType,
           amountTaxable,
           transactionDate: new Date(),
-          month: parseInt(month),
-          year: parseInt(year),
-          description
+          month: m,
+          year: y,
+          description,
+          source
         });
 
         successCount++;
@@ -264,240 +316,400 @@ async function startServer() {
 
   // Tax Calculation & Summary
   app.get("/api/tax/summary", authenticate, async (req: any, res) => {
-    const { month, year, branchCode } = req.query;
-    const where: any = { month, year };
-    if (req.user.role !== "admin") where.branchCode = req.user.branchCode;
-    else if (branchCode) where.branchCode = branchCode;
-
-    const transactions = await IncomeTransaction.findAll({ where });
-    const employees = await Employee.findAll();
-    const configs = await TaxConfig.findAll();
-    const configMap = configs.reduce((acc: any, c: any) => ({ ...acc, [c.key]: parseFloat(c.value) }), {});
-
-    // Group by account
-    const summary: any = {};
-    transactions.forEach((t: any) => {
-      if (!summary[t.accountNumber]) {
-        const emp: any = employees.find((e: any) => e.accountNumber === t.accountNumber);
-        summary[t.accountNumber] = {
-          accountNumber: t.accountNumber,
-          fullName: emp?.fullName || "N/A",
-          branchCode: t.branchCode,
-          npt: emp?.numDependents || 0,
-          income: {
-            "851101": 0, "851102": 0, "462001": 0, "484101": 0, "484201": 0, "891001": 0, "BAO_NO": 0, "BAO_CO": 0, "OTHER": 0
-          },
-          deductFromIncome: {
-            "DOC_HAI": 0, "KHU_VUC": 0
-          },
-          deductFromTaxable: {
-            "BAO_HIEM": 0, "TU_THIEN": 0
-          },
-          withheld: 0
-        };
+    try {
+      const { month, year, branchCode, source } = req.query;
+      if (!year || isNaN(parseInt(year as string))) return res.status(400).json({ message: "Thông tin năm không hợp lệ" });
+      
+      const where: any = { year: parseInt(year as string) };
+      if (month && month !== 'all') {
+        if (isNaN(parseInt(month as string))) return res.status(400).json({ message: "Thông tin tháng không hợp lệ" });
+        where.month = parseInt(month as string);
       }
       
-      const amount = parseFloat(t.amountTaxable);
-      if (summary[t.accountNumber].income.hasOwnProperty(t.accountType)) {
-        summary[t.accountNumber].income[t.accountType] += amount;
-      } else if (summary[t.accountNumber].deductFromIncome.hasOwnProperty(t.accountType)) {
-        summary[t.accountNumber].deductFromIncome[t.accountType] += amount;
-      } else if (summary[t.accountNumber].deductFromTaxable.hasOwnProperty(t.accountType)) {
-        summary[t.accountNumber].deductFromTaxable[t.accountType] += amount;
-      } else if (t.accountType === "KHAU_TRU") {
-        summary[t.accountNumber].withheld += amount;
-      } else {
-        summary[t.accountNumber].income["OTHER"] += amount;
+      if (req.user.role !== "admin") {
+        where.branchCode = req.user.branchCode;
+      } else if (branchCode) {
+        where.branchCode = branchCode;
       }
-    });
 
-    // Calculate Tax for each
-    const results = Object.values(summary).map((s: any) => {
-      const totalGross = Object.values(s.income).reduce((a: any, b: any) => a + b, 0) as number;
-      const deductHazard = s.deductFromIncome["DOC_HAI"];
-      const deductRegional = s.deductFromIncome["KHU_VUC"];
-      
-      // TNCT = Tổng thu nhập - Phụ cấp độc hại - Phụ cấp khu vực
-      const taxableIncome = totalGross - deductHazard - deductRegional;
-      
-      const deductPersonal = configMap.deduct_personal;
-      const deductDependent = s.npt * configMap.deduct_dependent;
-      const deductInsurance = s.deductFromTaxable["BAO_HIEM"];
-      const deductCharity = s.deductFromTaxable["TU_THIEN"];
-      
-      const totalFamilyDeduct = deductPersonal + deductDependent;
-      const totalDeduction = totalFamilyDeduct + deductInsurance + deductCharity;
-      
-      const netTaxableIncome = Math.max(0, taxableIncome - totalDeduction);
+      if (source) {
+        where.source = source;
+      }
 
-      let tax = 0;
-      const t = netTaxableIncome;
-      if (t <= configMap.bracket_1_limit) tax = t * configMap.bracket_1_rate;
-      else if (t <= configMap.bracket_2_limit) tax = t * configMap.bracket_2_rate - 500000;
-      else if (t <= configMap.bracket_3_limit) tax = t * configMap.bracket_3_rate - 3500000;
-      else if (t <= configMap.bracket_4_limit) tax = t * configMap.bracket_4_rate - 9500000;
-      else tax = t * configMap.bracket_5_rate - 14500000;
-
-      return {
-        ...s,
-        totalGross,
-        taxableIncome,
-        deductHazard,
-        deductRegional,
-        deductPersonal,
-        deductDependent,
-        deductInsurance,
-        deductCharity,
-        totalFamilyDeduct,
-        totalDeduction,
-        netTaxableIncome,
-        taxAmount: Math.round(tax)
+      const transactions = await IncomeTransaction.findAll({ where });
+      const employees = await Employee.findAll();
+      const configs = await TaxConfig.findAll();
+      
+      const defaultConfig = {
+        deduct_personal: 11000000,
+        deduct_dependent: 4400000,
+        bracket_1_limit: 5000000,
+        bracket_2_limit: 10000000,
+        bracket_3_limit: 18000000,
+        bracket_4_limit: 32000000,
+        bracket_1_rate: 0.05,
+        bracket_2_rate: 0.10,
+        bracket_3_rate: 0.15,
+        bracket_4_rate: 0.20,
+        bracket_5_rate: 0.25
       };
-    });
 
-    res.json(results);
+      const configMap = configs.reduce((acc: any, c: any) => ({ ...acc, [c.key]: parseFloat(c.value) }), { ...defaultConfig });
+
+      // Group by account
+      const summary: any = {};
+      transactions.forEach((t: any) => {
+        if (!summary[t.accountNumber]) {
+          const emp: any = employees.find((e: any) => e.accountNumber === t.accountNumber);
+          summary[t.accountNumber] = {
+            accountNumber: t.accountNumber,
+            fullName: emp?.fullName || "N/A",
+            branchCode: t.branchCode,
+            npt: emp?.numDependents || 0,
+            income: {
+              "851101": 0, "851102": 0, "462001": 0, "484101": 0, "484201": 0, "891001": 0, "BAO_NO": 0, "BAO_CO": 0, "OTHER": 0
+            },
+            deductFromIncome: {
+              "DOC_HAI": 0, "KHU_VUC": 0
+            },
+            deductFromTaxable: {
+              "BAO_HIEM": 0, "TU_THIEN": 0
+            },
+            withheld: 0,
+            sources: new Set()
+          };
+        }
+        
+        const s = summary[t.accountNumber];
+        s.sources.add(t.source);
+        const amount = parseFloat(t.amountTaxable);
+        if (s.income.hasOwnProperty(t.accountType)) {
+          s.income[t.accountType] += amount;
+        } else if (s.deductFromIncome.hasOwnProperty(t.accountType)) {
+          s.deductFromIncome[t.accountType] += amount;
+        } else if (s.deductFromTaxable.hasOwnProperty(t.accountType)) {
+          s.deductFromTaxable[t.accountType] += amount;
+        } else if (t.accountType === "KHAU_TRU") {
+          s.withheld += amount;
+        } else {
+          s.income["OTHER"] += amount;
+        }
+      });
+
+      // Calculate Tax for each
+      const results = Object.values(summary).map((s: any) => {
+        const totalGross = Object.values(s.income).reduce((a: any, b: any) => a + b, 0) as number;
+        const deductHazard = s.deductFromIncome["DOC_HAI"];
+        const deductRegional = s.deductFromIncome["KHU_VUC"];
+        
+        // TNCT = Tổng thu nhập - Phụ cấp độc hại - Phụ cấp khu vực
+        const taxableIncome = totalGross - deductHazard - deductRegional;
+        
+        // If yearly, multiply personal deductions by 12 or by number of months present?
+        // Usually PIT is calculated monthly, but final settlement is yearly.
+        // The user asked for "Theo năm (tổng hợp cả năm)".
+        const isYearly = !month;
+        const multiplier = isYearly ? 12 : 1;
+
+        const deductPersonal = configMap.deduct_personal * multiplier;
+        const deductDependent = s.npt * configMap.deduct_dependent * multiplier;
+        const deductInsurance = s.deductFromTaxable["BAO_HIEM"];
+        const deductCharity = s.deductFromTaxable["TU_THIEN"];
+        
+        const totalFamilyDeduct = deductPersonal + deductDependent;
+        const totalDeduction = totalFamilyDeduct + deductInsurance + deductCharity;
+        
+        const netTaxableIncome = Math.max(0, taxableIncome - totalDeduction);
+
+        let tax = 0;
+        const t = netTaxableIncome;
+        
+        // Yearly brackets are 12x monthly brackets
+        const b1 = configMap.bracket_1_limit * multiplier;
+        const b2 = configMap.bracket_2_limit * multiplier;
+        const b3 = configMap.bracket_3_limit * multiplier;
+        const b4 = configMap.bracket_4_limit * multiplier;
+
+        if (t <= b1) tax = t * configMap.bracket_1_rate;
+        else if (t <= b2) tax = t * configMap.bracket_2_rate - (500000 * multiplier);
+        else if (t <= b3) tax = t * configMap.bracket_3_rate - (3500000 * multiplier);
+        else if (t <= b4) tax = t * configMap.bracket_4_rate - (9500000 * multiplier);
+        else tax = t * configMap.bracket_5_rate - (14500000 * multiplier);
+
+        return {
+          ...s,
+          sources: Array.from(s.sources),
+          totalGross,
+          taxableIncome,
+          deductHazard,
+          deductRegional,
+          deductPersonal,
+          deductDependent,
+          deductInsurance,
+          deductCharity,
+          totalFamilyDeduct,
+          totalDeduction,
+          netTaxableIncome,
+          taxAmount: Math.round(tax)
+        };
+      });
+
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Delete Transactions
+  app.delete("/api/transactions", authenticate, async (req: any, res) => {
+    try {
+      const { month, year, branchCode } = req.query;
+      if (!year || isNaN(parseInt(year as string))) return res.status(400).json({ message: "Thông tin năm không hợp lệ" });
+
+      const where: any = { year: parseInt(year as string) };
+      if (month && month !== 'all') {
+        if (isNaN(parseInt(month as string))) return res.status(400).json({ message: "Thông tin tháng không hợp lệ" });
+        where.month = parseInt(month as string);
+      }
+      
+      if (req.user.role !== "admin") {
+        where.branchCode = req.user.branchCode;
+      } else if (branchCode) {
+        where.branchCode = branchCode;
+      }
+
+      const count = await IncomeTransaction.destroy({ where });
+      res.json({ message: `Đã xóa ${count} bản ghi`, count });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Get Upload History (Summary of transactions by month/year/branch)
+  app.get("/api/upload/history", authenticate, async (req: any, res) => {
+    try {
+      const where: any = {};
+      if (req.user.role !== "admin") {
+        where.branchCode = req.user.branchCode;
+      }
+
+      const history = await IncomeTransaction.findAll({
+        attributes: [
+          'month', 'year', 'branchCode', 'source',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+          [sequelize.fn('SUM', sequelize.col('amountTaxable')), 'totalAmount']
+        ],
+        where,
+        group: ['month', 'year', 'branchCode', 'source'],
+        order: [['year', 'DESC'], ['month', 'DESC']]
+      });
+
+      res.json(history);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // Export
   app.get("/api/export/monthly", authenticate, async (req: any, res) => {
-    const { month, year, branchCode } = req.query;
-    const where: any = { month, year };
-    if (req.user.role !== "admin") where.branchCode = req.user.branchCode;
-    else if (branchCode) where.branchCode = branchCode;
-
-    const transactions = await IncomeTransaction.findAll({ where });
-    const employees = await Employee.findAll();
-    const configs = await TaxConfig.findAll();
-    const configMap = configs.reduce((acc: any, c: any) => ({ ...acc, [c.key]: parseFloat(c.value) }), {});
-
-    // Group by account (Same logic as summary)
-    const summary: any = {};
-    transactions.forEach((t: any) => {
-      if (!summary[t.accountNumber]) {
-        const emp: any = employees.find((e: any) => e.accountNumber === t.accountNumber);
-        summary[t.accountNumber] = {
-          accountNumber: t.accountNumber,
-          fullName: emp?.fullName || "N/A",
-          taxCode: emp?.taxCode || "",
-          branchCode: t.branchCode,
-          npt: emp?.numDependents || 0,
-          income: { "851101": 0, "851102": 0, "462001": 0, "484101": 0, "484201": 0, "891001": 0, "BAO_NO": 0, "BAO_CO": 0, "OTHER": 0 },
-          deductFromIncome: { "DOC_HAI": 0, "KHU_VUC": 0 },
-          deductFromTaxable: { "BAO_HIEM": 0, "TU_THIEN": 0 },
-          withheld: 0
-        };
+    try {
+      const { month, year, branchCode } = req.query;
+      if (!year || isNaN(parseInt(year as string))) return res.status(400).json({ message: "Thông tin năm không hợp lệ" });
+      
+      const where: any = { year: parseInt(year as string) };
+      if (month && month !== 'all') {
+        if (isNaN(parseInt(month as string))) return res.status(400).json({ message: "Thông tin tháng không hợp lệ" });
+        where.month = parseInt(month as string);
       }
-      const amount = parseFloat(t.amountTaxable);
-      if (summary[t.accountNumber].income.hasOwnProperty(t.accountType)) summary[t.accountNumber].income[t.accountType] += amount;
-      else if (summary[t.accountNumber].deductFromIncome.hasOwnProperty(t.accountType)) summary[t.accountNumber].deductFromIncome[t.accountType] += amount;
-      else if (summary[t.accountNumber].deductFromTaxable.hasOwnProperty(t.accountType)) summary[t.accountNumber].deductFromTaxable[t.accountType] += amount;
-      else if (t.accountType === "KHAU_TRU") summary[t.accountNumber].withheld += amount;
-      else summary[t.accountNumber].income["OTHER"] += amount;
-    });
 
-    const results = Object.values(summary).map((s: any) => {
-      const totalGross = Object.values(s.income).reduce((a: any, b: any) => a + b, 0) as number;
-      const deductHazard = s.deductFromIncome["DOC_HAI"];
-      const deductRegional = s.deductFromIncome["KHU_VUC"];
-      const taxableIncome = totalGross - deductHazard - deductRegional;
-      const deductPersonal = configMap.deduct_personal;
-      const deductDependent = s.npt * configMap.deduct_dependent;
-      const deductInsurance = s.deductFromTaxable["BAO_HIEM"];
-      const deductCharity = s.deductFromTaxable["TU_THIEN"];
-      const totalFamilyDeduct = deductPersonal + deductDependent;
-      const totalDeduction = totalFamilyDeduct + deductInsurance + deductCharity;
-      const netTaxableIncome = Math.max(0, taxableIncome - totalDeduction);
+      if (req.user.role !== "admin") where.branchCode = req.user.branchCode;
+      else if (branchCode) where.branchCode = branchCode;
 
-      let tax = 0;
-      const t = netTaxableIncome;
-      if (t <= configMap.bracket_1_limit) tax = t * configMap.bracket_1_rate;
-      else if (t <= configMap.bracket_2_limit) tax = t * configMap.bracket_2_rate - 500000;
-      else if (t <= configMap.bracket_3_limit) tax = t * configMap.bracket_3_rate - 3500000;
-      else if (t <= configMap.bracket_4_limit) tax = t * configMap.bracket_4_rate - 9500000;
-      else tax = t * configMap.bracket_5_rate - 14500000;
+      const transactions = await IncomeTransaction.findAll({ where });
+      const employees = await Employee.findAll();
+      const configs = await TaxConfig.findAll();
+      
+      const defaultConfig = {
+        deduct_personal: 11000000,
+        deduct_dependent: 4400000,
+        bracket_1_limit: 5000000,
+        bracket_2_limit: 10000000,
+        bracket_3_limit: 18000000,
+        bracket_4_limit: 32000000,
+        bracket_1_rate: 0.05,
+        bracket_2_rate: 0.10,
+        bracket_3_rate: 0.15,
+        bracket_4_rate: 0.20,
+        bracket_5_rate: 0.25
+      };
 
-      return { ...s, totalGross, taxableIncome, deductHazard, deductRegional, deductPersonal, deductDependent, deductInsurance, deductCharity, totalFamilyDeduct, totalDeduction, netTaxableIncome, taxAmount: Math.round(tax) };
-    });
+      const configMap = configs.reduce((acc: any, c: any) => ({ ...acc, [c.key]: parseFloat(c.value) }), { ...defaultConfig });
 
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("BKTN");
+      // Group by account (Same logic as summary)
+      const summary: any = {};
+      transactions.forEach((t: any) => {
+        if (!summary[t.accountNumber]) {
+          const emp: any = employees.find((e: any) => e.accountNumber === t.accountNumber);
+          summary[t.accountNumber] = {
+            accountNumber: t.accountNumber,
+            fullName: emp?.fullName || "N/A",
+            taxCode: emp?.taxCode || "",
+            branchCode: t.branchCode,
+            npt: emp?.numDependents || 0,
+            income: { "851101": 0, "851102": 0, "462001": 0, "484101": 0, "484201": 0, "891001": 0, "BAO_NO": 0, "BAO_CO": 0, "OTHER": 0 },
+            deductFromIncome: { "DOC_HAI": 0, "KHU_VUC": 0 },
+            deductFromTaxable: { "BAO_HIEM": 0, "TU_THIEN": 0 },
+            withheld: 0
+          };
+        }
+        const amount = parseFloat(t.amountTaxable);
+        if (summary[t.accountNumber].income.hasOwnProperty(t.accountType)) summary[t.accountNumber].income[t.accountType] += amount;
+        else if (summary[t.accountNumber].deductFromIncome.hasOwnProperty(t.accountType)) summary[t.accountNumber].deductFromIncome[t.accountType] += amount;
+        else if (summary[t.accountNumber].deductFromTaxable.hasOwnProperty(t.accountType)) summary[t.accountNumber].deductFromTaxable[t.accountType] += amount;
+        else if (t.accountType === "KHAU_TRU") summary[t.accountNumber].withheld += amount;
+        else summary[t.accountNumber].income["OTHER"] += amount;
+      });
 
-    // Header
-    sheet.mergeCells("A1:AB1");
-    sheet.getCell("A1").value = "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM";
-    sheet.getCell("A1").font = { bold: true };
+      const isYearly = !month;
+      const multiplier = isYearly ? 12 : 1;
 
-    sheet.mergeCells("A2:AB2");
-    sheet.getCell("A2").value = `CHI NHÁNH: ${branchCode || req.user.branchCode}`;
+      const results = Object.values(summary).map((s: any) => {
+        const totalGross = Object.values(s.income).reduce((a: any, b: any) => a + b, 0) as number;
+        const deductHazard = s.deductFromIncome["DOC_HAI"];
+        const deductRegional = s.deductFromIncome["KHU_VUC"];
+        const taxableIncome = totalGross - deductHazard - deductRegional;
+        const deductPersonal = configMap.deduct_personal * multiplier;
+        const deductDependent = s.npt * configMap.deduct_dependent * multiplier;
+        const deductInsurance = s.deductFromTaxable["BAO_HIEM"];
+        const deductCharity = s.deductFromTaxable["TU_THIEN"];
+        const totalFamilyDeduct = deductPersonal + deductDependent;
+        const totalDeduction = totalFamilyDeduct + deductInsurance + deductCharity;
+        const netTaxableIncome = Math.max(0, taxableIncome - totalDeduction);
 
-    sheet.mergeCells("A3:AB3");
-    sheet.getCell("A3").value = `BẢNG KÊ THU NHẬP CHỊU THUẾ VÀ THUẾ TNCN ĐÃ KHẤU TRỪ ĐỐI VỚI THU NHẬP TỪ TIỀN LƯƠNG TIỀN CÔNG THÁNG ${month} NĂM ${year}`;
-    sheet.getCell("A3").alignment = { horizontal: "center" };
-    sheet.getCell("A3").font = { bold: true, size: 14 };
+        let tax = 0;
+        const t = netTaxableIncome;
+        const b1 = configMap.bracket_1_limit * multiplier;
+        const b2 = configMap.bracket_2_limit * multiplier;
+        const b3 = configMap.bracket_3_limit * multiplier;
+        const b4 = configMap.bracket_4_limit * multiplier;
 
-    sheet.mergeCells("A4:W4");
-    sheet.getCell("A4").value = "Địa chỉ: ……………    Mã số thuế: ……………";
-    sheet.mergeCells("X4:AB4");
-    sheet.getCell("X4").value = "Đơn vị tính: VND";
-    sheet.getCell("X4").alignment = { horizontal: "right" };
+        if (t <= b1) tax = t * configMap.bracket_1_rate;
+        else if (t <= b2) tax = t * configMap.bracket_2_rate - (500000 * multiplier);
+        else if (t <= b3) tax = t * configMap.bracket_3_rate - (3500000 * multiplier);
+        else if (t <= b4) tax = t * configMap.bracket_4_rate - (9500000 * multiplier);
+        else tax = t * configMap.bracket_5_rate - (14500000 * multiplier);
 
-    // Column Headers (Simplified for brevity, but following the structure)
-    const headerRow = ["STT", "Họ và tên", "Mã số thuế", "Lương V1", "Lương V2", "Năng suất", "Khen thưởng", "Phúc lợi 891", "Khác", "", "Độc hại", "Khu vực", "TNCT", "Số NPT", "Tháng GT", "GT NPT", "GT Bản thân", "Tổng GT GC", "BH bắt buộc", "", "Từ thiện", "Tổng GT", "TNTT", "Thuế TNCN", "GHI CHÚ", "", "TNCT khấu trừ", "Số cá nhân"];
-    sheet.addRow(headerRow);
-    
-    // Data Rows
-    results.forEach((r: any, idx) => {
-      sheet.addRow([
-        idx + 1,
-        r.fullName,
-        r.taxCode,
-        r.income["851101"],
-        r.income["851102"],
-        r.income["462001"],
-        r.income["484101"],
-        r.income["891001"],
-        r.income["OTHER"] + r.income["BAO_NO"] + r.income["BAO_CO"],
-        "",
-        r.deductHazard,
-        r.deductRegional,
-        r.taxableIncome,
-        r.npt,
-        1,
-        r.deductDependent,
-        r.deductPersonal,
-        r.totalFamilyDeduct,
-        r.deductInsurance,
-        "",
-        r.deductCharity,
-        r.totalDeduction,
-        r.netTaxableIncome,
-        r.taxAmount,
-        "",
-        "",
-        r.taxAmount > 0 ? r.taxableIncome : "",
-        r.taxAmount > 0 ? 1 : ""
-      ]);
-    });
+        return { ...s, totalGross, taxableIncome, deductHazard, deductRegional, deductPersonal, deductDependent, deductInsurance, deductCharity, totalFamilyDeduct, totalDeduction, netTaxableIncome, taxAmount: Math.round(tax) };
+      });
 
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename=${branchCode || "BKTN"}_Thang${month}_Nam${year}.xlsx`);
-    await workbook.xlsx.write(res);
-    res.end();
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("BKTN");
+
+      // Header
+      sheet.mergeCells("A1:AB1");
+      sheet.getCell("A1").value = "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM";
+      sheet.getCell("A1").font = { bold: true };
+
+      sheet.mergeCells("A2:AB2");
+      sheet.getCell("A2").value = `CHI NHÁNH: ${branchCode || req.user.branchCode}`;
+
+      sheet.mergeCells("A3:AB3");
+      sheet.getCell("A3").value = `BẢNG KÊ THU NHẬP CHỊU THUẾ VÀ THUẾ TNCN ĐÃ KHẤU TRỪ ĐỐI VỚI THU NHẬP TỪ TIỀN LƯƠNG TIỀN CÔNG ${isYearly ? `NĂM ${year}` : `THÁNG ${month} NĂM ${year}`}`;
+      sheet.getCell("A3").alignment = { horizontal: "center" };
+      sheet.getCell("A3").font = { bold: true, size: 14 };
+
+      sheet.mergeCells("A4:W4");
+      sheet.getCell("A4").value = "Địa chỉ: ……………    Mã số thuế: ……………";
+      sheet.mergeCells("X4:AB4");
+      sheet.getCell("X4").value = "Đơn vị tính: VND";
+      sheet.getCell("X4").alignment = { horizontal: "right" };
+
+      // Column Headers
+      const headerRow = ["STT", "Họ và tên", "Mã số thuế", "Lương V1", "Lương V2", "Năng suất", "Khen thưởng", "Phúc lợi 891", "Khác", "", "Độc hại", "Khu vực", "TNCT", "Số NPT", "Tháng GT", "GT NPT", "GT Bản thân", "Tổng GT GC", "BH bắt buộc", "", "Từ thiện", "Tổng GT", "TNTT", "Thuế TNCN", "GHI CHÚ", "", "TNCT khấu trừ", "Số cá nhân"];
+      sheet.addRow(headerRow);
+      
+      // Data Rows
+      results.forEach((r: any, idx) => {
+        sheet.addRow([
+          idx + 1,
+          r.fullName,
+          r.taxCode,
+          r.income["851101"],
+          r.income["851102"],
+          r.income["462001"],
+          r.income["484101"],
+          r.income["891001"],
+          r.income["OTHER"] + r.income["BAO_NO"] + r.income["BAO_CO"],
+          "",
+          r.deductHazard,
+          r.deductRegional,
+          r.taxableIncome,
+          r.npt,
+          multiplier,
+          r.deductDependent,
+          r.deductPersonal,
+          r.totalFamilyDeduct,
+          r.deductInsurance,
+          "",
+          r.deductCharity,
+          r.totalDeduction,
+          r.netTaxableIncome,
+          r.taxAmount,
+          "",
+          "",
+          r.taxAmount > 0 ? r.taxableIncome : "",
+          r.taxAmount > 0 ? 1 : ""
+        ]);
+      });
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename=${branchCode || "BKTN"}_${isYearly ? `Nam${year}` : `Thang${month}_Nam${year}`}.xlsx`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // Config
   app.get("/api/config/tax", authenticate, async (req, res) => {
-    const configs = await TaxConfig.findAll();
-    res.json(configs);
+    try {
+      const configs = await TaxConfig.findAll();
+      res.json(configs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.put("/api/config/tax", authenticate, async (req: any, res) => {
-    if (req.user.role !== "admin") return res.status(403).json({ message: "Forbidden" });
-    const { configs } = req.body;
-    for (const c of configs) {
-      await TaxConfig.update({ value: c.value }, { where: { key: c.key } });
+    try {
+      if (req.user.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+      const { configs } = req.body;
+      for (const c of configs) {
+        await TaxConfig.update({ value: c.value }, { where: { key: c.key } });
+      }
+      res.json({ message: "Cập nhật thành công" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
-    res.json({ message: "Cập nhật thành công" });
+  });
+
+  app.put("/api/employees/:accountNumber", authenticate, async (req, res) => {
+    const { accountNumber } = req.params;
+    const { numDependents, fullName } = req.body;
+
+    try {
+      const employee = await Employee.findByPk(accountNumber);
+      if (!employee) return res.status(404).json({ message: "Không tìm thấy nhân viên" });
+
+      if (numDependents !== undefined) (employee as any).numDependents = numDependents;
+      if (fullName !== undefined) (employee as any).fullName = fullName;
+
+      await employee.save();
+      res.json(employee);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   // Vite middleware for development
@@ -509,25 +721,23 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-
-    // Serve static assets dưới prefix /agribank/ (khớp với vite base)
-    app.use("/agribank", express.static(distPath));
-
-    // Fallback: mọi route /agribank/* đều trả index.html (SPA routing)
-    // Đặt SAU các API routes nên không ảnh hưởng /api/*
-    app.get("/agribank/*", (req, res) => {
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
-
-    // Redirect root về /agribank/
-    app.get("/", (req, res) => {
-      res.redirect("/agribank/");
-    });
   }
+
+  // Global Error Handler
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error("Unhandled Error:", err);
+    res.status(500).json({ message: "Lỗi hệ thống không mong muốn: " + err.message });
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("Failed to start server:", err);
+});

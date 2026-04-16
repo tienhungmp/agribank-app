@@ -1,19 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
+import { useAuth } from '../context/AuthContext';
 import { Search, User, Building2, Users as UsersIcon, Edit2, Check, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function EmployeePage() {
+  const { isAdmin } = useAuth();
   const [employees, setEmployees] = useState<any[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [branchCode, setBranchCode] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<number>(0);
+
+  useEffect(() => {
+    fetchEmployees();
+    if (isAdmin) fetchBranches();
+  }, [branchCode]);
+
+  const fetchBranches = async () => {
+    try {
+      const res = await api.get('/branches');
+      setBranches(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const fetchEmployees = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/tax/summary', { params: { month: new Date().getMonth() + 1, year: new Date().getFullYear() } });
+      const params: any = { month: new Date().getMonth() + 1, year: new Date().getFullYear() };
+      if (isAdmin && branchCode) params.branchCode = branchCode;
+      const res = await api.get('/tax/summary', { params });
       setEmployees(res.data);
     } catch (err) {
       console.error(err);
@@ -22,10 +42,6 @@ export default function EmployeePage() {
     }
   };
 
-  useEffect(() => {
-    fetchEmployees();
-  }, []);
-
   const handleEdit = (emp: any) => {
     setEditingId(emp.accountNumber);
     setEditValue(emp.npt);
@@ -33,9 +49,8 @@ export default function EmployeePage() {
 
   const handleSave = async (id: string) => {
     try {
-      // In a real app, we'd have a specific endpoint for this
-      // await api.put(`/employees/${id}/dependents`, { npt: editValue });
-      toast.success('Cập nhật thành công (Demo)');
+      await api.put(`/employees/${id}`, { numDependents: editValue });
+      toast.success('Cập nhật thành công');
       setEmployees(prev => prev.map(e => e.accountNumber === id ? { ...e, npt: editValue } : e));
       setEditingId(null);
     } catch (err) {
@@ -61,7 +76,21 @@ export default function EmployeePage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <div className="flex items-center gap-3 px-6 py-4 bg-agribank-maroon/5 text-agribank-maroon rounded-2xl border border-agribank-maroon/10">
+        
+        {isAdmin && (
+          <div className="w-full md:w-64">
+            <select 
+              className="w-full p-5 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-agribank-maroon font-bold text-sm"
+              value={branchCode}
+              onChange={(e) => setBranchCode(e.target.value)}
+            >
+              <option value="">Tất cả chi nhánh</option>
+              {branches.map(b => <option key={b.code} value={b.code}>{b.code} - {b.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 px-6 py-4 bg-agribank-maroon/5 text-agribank-maroon rounded-2xl border border-agribank-maroon/10 shrink-0">
           <UsersIcon size={24} />
           <span className="font-black text-lg">{filtered.length}</span>
           <span className="text-[10px] font-black uppercase tracking-widest opacity-60">Nhân viên</span>
@@ -81,7 +110,7 @@ export default function EmployeePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filtered.map((emp) => (
+              {Array.isArray(filtered) && filtered.map((emp) => (
                 <tr key={emp.accountNumber} className="hover:bg-gray-50/50 transition-colors group">
                   <td className="px-8 py-6">
                     <div className="flex items-center gap-4">

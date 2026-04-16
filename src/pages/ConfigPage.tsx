@@ -120,16 +120,18 @@ export default function ConfigPage() {
             </thead>
             <tbody className="divide-y divide-gray-50 text-sm">
               {[
-                { bậc: 1, tháng: 'Đến 10 triệu', năm: 'Đến 120 triệu', suất: '5%' },
-                { bậc: 2, tháng: '10 – 30 triệu', năm: '120 – 360 triệu', suất: '10%' },
-                { bậc: 3, tháng: '30 – 60 triệu', năm: '360 – 720 triệu', suất: '20%' },
-                { bậc: 4, tháng: '60 – 100 triệu', năm: '720 – 1.200 triệu', suất: '30%' },
-                { bậc: 5, tháng: 'Trên 100 triệu', năm: 'Trên 1.200 triệu', suất: '35%' },
+                { bậc: 1, tháng: 'Đến 5 triệu', năm: 'Đến 60 triệu', suất: '5%' },
+                { bậc: 2, tháng: 'Trên 5 - 10 triệu', năm: 'Trên 60 - 120 triệu', suất: '10%' },
+                { bậc: 3, tháng: 'Trên 10 - 18 triệu', năm: 'Trên 120 - 216 triệu', suất: '15%' },
+                { bậc: 4, tháng: 'Trên 18 - 32 triệu', năm: 'Trên 216 - 384 triệu', suất: '20%' },
+                { bậc: 5, tháng: 'Trên 32 - 52 triệu', năm: 'Trên 384 - 624 triệu', suất: '25%' },
+                { bậc: 6, tháng: 'Trên 52 - 80 triệu', năm: 'Trên 624 - 960 triệu', suất: '30%' },
+                { bậc: 7, tháng: 'Trên 80 triệu', năm: 'Trên 960 triệu', suất: '35%' },
               ].map((row) => (
                 <tr key={row.bậc} className="hover:bg-gray-50/50 transition-colors">
                   <td className="px-8 py-5 font-black text-gray-800">{row.bậc}</td>
-                  <td className="px-8 py-5 font-bold text-gray-600">{row.tháng} VND</td>
-                  <td className="px-8 py-5 font-bold text-gray-400">{row.năm} VND</td>
+                  <td className="px-8 py-5 font-bold text-gray-600">{row.tháng}</td>
+                  <td className="px-8 py-5 font-bold text-gray-400">{row.năm}</td>
                   <td className="px-8 py-5 text-right text-agribank-maroon font-black text-lg">{row.suất}</td>
                 </tr>
               ))}
