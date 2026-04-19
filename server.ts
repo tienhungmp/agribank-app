@@ -155,6 +155,27 @@ async function initDB() {
 }
 
 // --- HELPER FUNCTIONS ---
+function calculatePIT(netTaxableIncome: number): number {
+  if (netTaxableIncome <= 0) return 0;
+  
+  // Biểu thuế lũy tiến từng phần (Tháng)
+  // 1: Đến 5tr - 5%
+  // 2: 5tr -> 10tr - 10%
+  // 3: 10tr -> 18tr - 15%
+  // 4: 18tr -> 32tr - 20%
+  // 5: 32tr -> 52tr - 25%
+  // 6: 52tr -> 80tr - 30%
+  // 7: Trên 80tr - 35%
+
+  if (netTaxableIncome <= 5000000) return netTaxableIncome * 0.05;
+  if (netTaxableIncome <= 10000000) return netTaxableIncome * 0.1 - 250000;
+  if (netTaxableIncome <= 18000000) return netTaxableIncome * 0.15 - 750000;
+  if (netTaxableIncome <= 32000000) return netTaxableIncome * 0.2 - 1650000;
+  if (netTaxableIncome <= 52000000) return netTaxableIncome * 0.25 - 3250000;
+  if (netTaxableIncome <= 80000000) return netTaxableIncome * 0.3 - 5850000;
+  return netTaxableIncome * 0.35 - 9850000;
+}
+
 function toFullAccountNumber(raw: any) {
   if (raw === undefined || raw === null || String(raw).trim() === "") return "";
   const str = String(raw).trim();
@@ -169,13 +190,13 @@ function detectAccountType(description: string): string {
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove accents
     .replace(/đ/g, "d");
   
-  if (desc.includes("361909")) return "361909";
+  if (desc.includes("361909") || desc.includes("thu chi thuong")) return "361909";
   if (desc.includes("484101") || desc.includes("khen thuong")) return "484101";
   if (desc.includes("484201") || desc.includes("phuc loi")) return "484201";
   if (desc.includes("851101") || desc.includes("luong co ban") || desc.includes("luong v1")) return "851101";
-  if (desc.includes("851102") || desc.includes("luong v2")) return "851102";
-  if (desc.includes("462001") || desc.includes("nang suat")) return "462001";
-  if (desc.includes("891001")) return "891001";
+  if (desc.includes("851102") || desc.includes("hieu qua cong viec") || desc.includes("v2")) return "851102";
+  if (desc.includes("462001") || desc.includes("tra cho can bo")) return "462001";
+  if (desc.includes("891001") || desc.includes("chi co tinh chat phuc loi")) return "891001";
   
   if (desc.includes("doc hai")) return "ALLOW_DOC_HAI";
   if (desc.includes("khu vuc")) return "ALLOW_KHU_VUC";
@@ -420,8 +441,8 @@ async function startServer() {
             fullName: emp?.fullName || "N/A",
             branchCode: t.branchCode,
             npt: emp?.numDependents || 0,
-            income: {
-              "851101": 0, "851102": 0, "462001": 0, "484101": 0, "484201": 0, "891001": 0, "OTHER": 0, "361909": 0
+            income: { 
+              "851101": 0, "851102": 0, "462001": 0, "484101": 0, "484201": 0, "891001": 0, "361909": 0, "OTHER": 0 
             },
             deductFromIncome: {
               "DOC_HAI": 0, "KHU_VUC": 0
@@ -476,7 +497,7 @@ async function startServer() {
         const totalDeduction = deductPersonal + deductDependent + deductInsurance + deductCharity;
         const netTaxableIncome = Math.max(0, taxableIncome - totalDeduction);
 
-        let tax = netTaxableIncome * 0.1;
+        let tax = calculatePIT(netTaxableIncome);
 
         return {
           ...s,
@@ -598,7 +619,7 @@ async function startServer() {
             taxCode: emp?.taxCode || "",
             branchCode: t.branchCode,
             npt: emp?.numDependents || 0,
-            income: { "851101": 0, "851102": 0, "462001": 0, "484101": 0, "484201": 0, "891001": 0, "OTHER": 0, "361909": 0 },
+            income: { "851101": 0, "851102": 0, "462001": 0, "484101": 0, "484201": 0, "891001": 0, "361909": 0, "OTHER": 0 },
             deductFromIncome: { "DOC_HAI": 0, "KHU_VUC": 0 },
             deductFromTaxable: { "BAO_HIEM": 0, "TU_THIEN": 0, "PERSONAL": 0, "DEPENDENT": 0 },
             withheld: 0
@@ -649,7 +670,7 @@ async function startServer() {
         const totalDeduction = totalFamilyDeduct + deductInsurance + deductCharity;
         const netTaxableIncome = Math.max(0, taxableIncome - totalDeduction);
 
-        let tax = netTaxableIncome * 0.1;
+        let tax = calculatePIT(netTaxableIncome);
 
         return { 
           ...s, 
@@ -780,6 +801,73 @@ async function startServer() {
       res.setHeader("Content-Disposition", `attachment; filename=${branchCode || "BKTN"}_${isYearly ? `Nam${year}` : `Thang${month}_Nam${year}`}.xlsx`);
       await workbook.xlsx.write(res);
       res.end();
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Get detailed income for an employee
+  app.get("/api/employees/:accountNumber/income", authenticate, async (req: any, res) => {
+    try {
+      const { accountNumber } = req.params;
+      const { month, year } = req.query;
+      if (!month || !year) return res.status(400).json({ message: "Thiếu tháng hoặc năm" });
+
+      const transactions = await IncomeTransaction.findAll({
+        where: { accountNumber, month: parseInt(month as string), year: parseInt(year as string) }
+      });
+
+      res.json(transactions);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Update employee income transactions
+  app.put("/api/employees/:accountNumber/income", authenticate, async (req: any, res) => {
+    try {
+      const { accountNumber } = req.params;
+      const { month, year, incomeItems } = req.body; // incomeItems: { categoryCode: amount }
+      
+      if (!month || !year || !incomeItems) return res.status(400).json({ message: "Thiếu thông tin cập nhật" });
+
+      const m = parseInt(month);
+      const y = parseInt(year);
+
+      const emp: any = await Employee.findByPk(accountNumber);
+      if (!emp) return res.status(404).json({ message: "Không tìm thấy cán bộ" });
+
+      for (const [code, amount] of Object.entries(incomeItems)) {
+        const val = parseFloat(amount as string) || 0;
+        
+        // Find if transaction exists for this category in this period
+        const existing = await IncomeTransaction.findOne({
+          where: { accountNumber, month: m, year: y, categoryCode: code }
+        });
+
+        if (existing) {
+          if (val === 0) {
+            await existing.destroy();
+          } else {
+            await existing.update({ amountTaxable: val });
+          }
+        } else if (val > 0) {
+          await IncomeTransaction.create({
+            accountNumber,
+            branchCode: emp.branchCode,
+            accountType: code, // Fallback
+            categoryCode: code,
+            amountTaxable: val,
+            transactionDate: `${y}-${String(m).padStart(2, '0')}-01`,
+            month: m,
+            year: y,
+            source: "Manual Update",
+            description: `Cập nhật thủ công ${m}/${y}`
+          });
+        }
+      }
+
+      res.json({ message: "Cập nhật thành công" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

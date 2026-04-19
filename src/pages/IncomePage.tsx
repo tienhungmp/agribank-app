@@ -4,6 +4,23 @@ import { useAuth } from '../context/AuthContext';
 import { Search, Filter, User, CreditCard, Users as UsersIcon, ChevronRight, Building2, Calendar, Database, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+const ACCOUNT_TYPES: Record<string, string> = {
+  "851101": "Lương V1 (Cơ bản)",
+  "851102": "Thù lao hiệu quả CV",
+  "462001": "Các khoản phải trả cho CB, NV",
+  "484101": "Quỹ khen thưởng",
+  "484201": "Quỹ phúc lợi",
+  "891001": "Chi có tính chất phúc lợi",
+  "361909": "Các khoản phải thu chi thưởng",
+  "ALLOW_DOC_HAI": "Độc hại kho quỹ",
+  "ALLOW_KHU_VUC": "Phụ cấp khu vực",
+  "ALLOW_BH": "BH Bắt buộc",
+  "ALLOW_TU_THIEN": "Từ thiện",
+  "DEDUCT_PERSONAL": "Giảm trừ cá nhân",
+  "DEDUCT_DEPENDENT": "Giảm trừ NPT",
+  "OTHER": "Khác / Không tính thuế"
+};
+
 export default function IncomePage() {
   const { user, isAdmin } = useAuth();
   const [search, setSearch] = useState('');
@@ -58,6 +75,18 @@ export default function IncomePage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getAmountByCategory = (emp: any, code: string) => {
+    if (!code) return 0;
+    if (emp.income[code] !== undefined) return emp.income[code];
+    if (code === "ALLOW_DOC_HAI") return emp.deductFromIncome?.DOC_HAI || 0;
+    if (code === "ALLOW_KHU_VUC") return emp.deductFromIncome?.KHU_VUC || 0;
+    if (code === "ALLOW_BH") return emp.deductFromTaxable?.BAO_HIEM || 0;
+    if (code === "ALLOW_TU_THIEN") return emp.deductFromTaxable?.TU_THIEN || 0;
+    if (code === "DEDUCT_PERSONAL") return emp.deductFromTaxable?.PERSONAL || 0;
+    if (code === "DEDUCT_DEPENDENT") return emp.deductFromTaxable?.DEPENDENT || 0;
+    return 0;
   };
 
   const handleBranchCodeInput = (val: string) => {
@@ -150,18 +179,24 @@ export default function IncomePage() {
               onChange={(e) => setCategoryCode(e.target.value)}
             >
               <option value="">Tất cả loại</option>
-              <option value="851101">Lương V1</option>
-              <option value="851102">Lương V2</option>
-              <option value="462001">Năng suất</option>
-              <option value="484101">Khen thưởng</option>
-              <option value="484201">Phúc lợi</option>
-              <option value="891001">Chi phúc lợi</option>
-              <option value="ALLOW_DOC_HAI">Độc hại</option>
-              <option value="ALLOW_KHU_VUC">Khu vực</option>
-              <option value="ALLOW_BH">Bảo hiểm</option>
-              <option value="DEDUCT_PERSONAL">Giảm trừ cá nhân</option>
-              <option value="DEDUCT_DEPENDENT">Giảm trừ NPT</option>
-              <option value="OTHER">Khác</option>
+              <optgroup label="CÁC KHOẢN THU NHẬP">
+                <option value="361909">Các khoản phải thu chi thưởng</option>
+                <option value="484101">Quỹ khen thưởng</option>
+                <option value="484201">Quỹ phúc lợi</option>
+                <option value="851101">Lương V1 (Cơ bản)</option>
+                <option value="851102">Thù lao hiệu quả CV</option>
+                <option value="462001">Các khoản phải trả cho CB, NV</option>
+                <option value="891001">Chi có tính chất phúc lợi</option>
+                <option value="OTHER">Khác / Không tính thuế</option>
+              </optgroup>
+              <optgroup label="PHỤ CẤP & GIẢM TRỪ">
+                <option value="ALLOW_DOC_HAI">Độc hại kho quỹ</option>
+                <option value="ALLOW_KHU_VUC">Phụ cấp khu vực</option>
+                <option value="ALLOW_BH">BH Bắt buộc</option>
+                <option value="ALLOW_TU_THIEN">Từ thiện</option>
+                <option value="DEDUCT_PERSONAL">Giảm trừ cá nhân</option>
+                <option value="DEDUCT_DEPENDENT">Giảm trừ NPT</option>
+              </optgroup>
             </select>
           </div>
 
@@ -225,7 +260,7 @@ export default function IncomePage() {
                       <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">{emp.accountNumber}</p>
                       {categoryCode && (
                         <p className="text-[10px] bg-agribank-maroon/10 text-agribank-maroon px-1.5 py-0.5 rounded font-black">
-                          {(emp.income[categoryCode] || 0).toLocaleString('vi-VN')} ₫
+                          {getAmountByCategory(emp, categoryCode).toLocaleString('vi-VN')} ₫
                         </p>
                       )}
                     </div>
@@ -313,15 +348,25 @@ export default function IncomePage() {
                   </div>
                 </div>
                 <div className="p-8">
-                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                      {Object.entries(selectedEmp.income).map(([key, val]: any) => val > 0 && (
+                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                      {[
+                        ...Object.entries(selectedEmp.income).map(([k, v]) => ({ key: k, value: v })),
+                        { key: "ALLOW_DOC_HAI", value: selectedEmp.deductFromIncome?.DOC_HAI || 0 },
+                        { key: "ALLOW_KHU_VUC", value: selectedEmp.deductFromIncome?.KHU_VUC || 0 },
+                        { key: "ALLOW_BH", value: selectedEmp.deductFromTaxable?.BAO_HIEM || 0 },
+                        { key: "ALLOW_TU_THIEN", value: selectedEmp.deductFromTaxable?.TU_THIEN || 0 },
+                        { key: "DEDUCT_PERSONAL", value: selectedEmp.deductFromTaxable?.PERSONAL || 0 },
+                        { key: "DEDUCT_DEPENDENT", value: selectedEmp.deductFromTaxable?.DEPENDENT || 0 }
+                      ].filter(item => (item.value as number) > 0).map(({ key, value }: any) => (
                         <div key={key} className={`p-4 rounded-2xl border transition-all ${
                           key === categoryCode 
                           ? 'bg-agribank-maroon text-white border-agribank-maroon shadow-lg shadow-agribank-maroon/20 scale-105 ring-4 ring-agribank-maroon/10 z-10' 
                           : 'bg-gray-50 border-gray-100 text-gray-700'
                         }`}>
-                          <p className={`text-[10px] font-black uppercase mb-1 ${key === categoryCode ? 'text-white/60' : 'text-gray-400'}`}>{key}</p>
-                          <p className="font-mono font-black">{val.toLocaleString('vi-VN')} ₫</p>
+                          <p className={`text-[9px] font-black uppercase mb-1 tracking-tighter truncate ${key === categoryCode ? 'text-white/60' : 'text-gray-400'}`}>
+                            {ACCOUNT_TYPES[key] || key}
+                          </p>
+                          <p className="font-mono font-black">{value.toLocaleString('vi-VN')} ₫</p>
                         </div>
                       ))}
                    </div>

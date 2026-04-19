@@ -19,7 +19,6 @@ import DashboardPage from './pages/DashboardPage';
 import UploadPage from './pages/UploadPage';
 import IncomePage from './pages/IncomePage';
 import ExportPage from './pages/ExportPage';
-import ConfigPage from './pages/ConfigPage';
 import EmployeePage from './pages/EmployeePage';
 import logo from './assets/logo-agribank.jpg';
 
@@ -53,10 +52,6 @@ const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { to: '/employees', icon: Building2, label: 'Quản lý Cán bộ' },
     { to: '/tax', icon: FileDown, label: 'Báo cáo Thuế' },
   ];
-
-  if (isAdmin) {
-    menuItems.push({ to: '/config', icon: Settings, label: 'Cấu hình Thuế' });
-  }
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -176,7 +171,6 @@ export default function App() {
           <Route path="/income" element={<PrivateRoute><IncomePage /></PrivateRoute>} />
           <Route path="/employees" element={<PrivateRoute><EmployeePage /></PrivateRoute>} />
           <Route path="/tax" element={<PrivateRoute><ExportPage /></PrivateRoute>} />
-          <Route path="/config" element={<PrivateRoute><ConfigPage /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Router>

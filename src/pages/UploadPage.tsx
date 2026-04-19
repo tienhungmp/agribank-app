@@ -29,12 +29,10 @@ const ACCOUNT_TYPES = [
   { "code": "851102", "name": "Thù lao theo hiệu quả công việc", "category": "account" },
   { "code": "462001", "name": "Các khoản phải trả cho cán bộ, NV", "category": "account" },
   { "code": "891001", "name": "Các khoản chi có tính chất phúc lợi", "category": "account" },
-
   { "code": "ALLOW_DOC_HAI", "name": "Độc hại kho quỹ", "category": "allowance" },
   { "code": "ALLOW_KHU_VUC", "name": "Phụ cấp khu vực", "category": "allowance" },
   { "code": "ALLOW_BH", "name": "BH bắt buộc", "category": "allowance" },
   { "code": "ALLOW_TU_THIEN", "name": "Từ thiện", "category": "allowance" },
-
   { "code": "DEDUCT_PERSONAL", "name": "Giảm trừ cá nhân", "category": "deduction" },
   { "code": "DEDUCT_DEPENDENT", "name": "Giảm trừ NPT", "category": "deduction" },
   { "code": "OTHER", "name": "Khác / Không tính thuế", "category": "other" }
