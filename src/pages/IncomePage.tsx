@@ -11,6 +11,7 @@ export default function IncomePage() {
   const [year, setYear] = useState<number>(new Date().getFullYear());
   const [branchCode, setBranchCode] = useState('');
   const [source, setSource] = useState('');
+  const [categoryCode, setCategoryCode] = useState('');
   const [data, setData] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -37,6 +38,7 @@ export default function IncomePage() {
       if (month !== 'all') params.month = month;
       if (isAdmin && branchCode) params.branchCode = branchCode;
       if (source) params.source = source;
+      if (categoryCode) params.categoryCode = categoryCode;
 
       const res = await api.get('/tax/summary', { params });
       
@@ -48,6 +50,8 @@ export default function IncomePage() {
         );
       }
       setData(filtered);
+      if (filtered.length > 0) setSelectedEmp(filtered[0]);
+      else setSelectedEmp(null);
     } catch (err) {
       console.error(err);
       toast.error('Lỗi khi tải dữ liệu');
@@ -138,6 +142,29 @@ export default function IncomePage() {
             </select>
           </div>
 
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Loại thu nhập</label>
+            <select 
+              className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-agribank-maroon font-bold text-sm"
+              value={categoryCode}
+              onChange={(e) => setCategoryCode(e.target.value)}
+            >
+              <option value="">Tất cả loại</option>
+              <option value="851101">Lương V1</option>
+              <option value="851102">Lương V2</option>
+              <option value="462001">Năng suất</option>
+              <option value="484101">Khen thưởng</option>
+              <option value="484201">Phúc lợi</option>
+              <option value="891001">Chi phúc lợi</option>
+              <option value="ALLOW_DOC_HAI">Độc hại</option>
+              <option value="ALLOW_KHU_VUC">Khu vực</option>
+              <option value="ALLOW_BH">Bảo hiểm</option>
+              <option value="DEDUCT_PERSONAL">Giảm trừ cá nhân</option>
+              <option value="DEDUCT_DEPENDENT">Giảm trừ NPT</option>
+              <option value="OTHER">Khác</option>
+            </select>
+          </div>
+
           <div className="flex items-end gap-2">
             <button 
               onClick={handleSearch}
@@ -194,7 +221,14 @@ export default function IncomePage() {
                   </div>
                   <div className="overflow-hidden">
                     <p className="font-black text-gray-800 text-sm tracking-tight truncate">{emp.fullName}</p>
-                    <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mt-0.5">{emp.accountNumber}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">{emp.accountNumber}</p>
+                      {categoryCode && (
+                        <p className="text-[10px] bg-agribank-maroon/10 text-agribank-maroon px-1.5 py-0.5 rounded font-black">
+                          {(emp.income[categoryCode] || 0).toLocaleString('vi-VN')} ₫
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <ChevronRight size={16} className={`transition-all shrink-0 ${selectedEmp?.accountNumber === emp.accountNumber ? 'text-agribank-maroon translate-x-1' : 'text-gray-300 group-hover:text-agribank-maroon group-hover:translate-x-1'}`} />
@@ -239,39 +273,22 @@ export default function IncomePage() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                  <div className="space-y-6">
-                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Thu nhập & Giảm trừ ({month === 'all' ? `Năm ${year}` : `Tháng ${month}/${year}`})</h4>
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-500 font-bold text-sm">Tổng thu nhập (Gross)</span>
-                        <span className="font-mono font-black text-gray-800">{selectedEmp.totalGross.toLocaleString('vi-VN')} ₫</span>
-                      </div>
-                      <div className="flex justify-between items-center text-blue-600">
-                        <span className="text-xs font-bold">(-) Phụ cấp không tính thuế</span>
-                        <span className="font-mono font-bold">({(selectedEmp.deductHazard + selectedEmp.deductRegional).toLocaleString('vi-VN')}) ₫</span>
-                      </div>
-                      <div className="flex justify-between items-center font-bold">
-                        <span className="text-sm">Thu nhập chịu thuế (TNCT)</span>
-                        <span className="font-mono">{selectedEmp.taxableIncome.toLocaleString('vi-VN')} ₫</span>
-                      </div>
-                      <div className="pt-2 space-y-2">
-                        <div className="flex justify-between items-center text-red-500">
-                          <span className="text-xs font-bold">(-) Giảm trừ bản thân</span>
-                          <span className="font-mono font-bold">({selectedEmp.deductPersonal.toLocaleString('vi-VN')}) ₫</span>
-                        </div>
-                        <div className="flex justify-between items-center text-red-500">
-                          <span className="text-xs font-bold">(-) Giảm trừ {selectedEmp.npt} NPT</span>
-                          <span className="font-mono font-bold">({selectedEmp.deductDependent.toLocaleString('vi-VN')}) ₫</span>
-                        </div>
-                        <div className="flex justify-between items-center text-red-500">
-                          <span className="text-xs font-bold">(-) Bảo hiểm bắt buộc</span>
-                          <span className="font-mono font-bold">({selectedEmp.deductInsurance.toLocaleString('vi-VN')}) ₫</span>
-                        </div>
-                      </div>
-                      <div className="pt-5 border-t border-dashed border-gray-200 flex justify-between items-center">
-                        <span className="font-black text-gray-800 text-sm">Thu nhập tính thuế (TNTT)</span>
-                        <span className="font-mono font-black text-agribank-green text-lg">{selectedEmp.netTaxableIncome.toLocaleString('vi-VN')} ₫</span>
-                      </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-4 bg-gray-50/50 rounded-2xl border border-gray-100">
+                      <p className="text-[9px] text-gray-400 font-black uppercase mb-1">Thu nhập Gross</p>
+                      <p className="font-mono font-black text-gray-800 text-sm">{selectedEmp.totalGross.toLocaleString('vi-VN')} ₫</p>
+                    </div>
+                    <div className="p-4 bg-blue-50/30 rounded-2xl border border-blue-100">
+                      <p className="text-[9px] text-blue-400 font-black uppercase mb-1">TN Chịu thuế</p>
+                      <p className="font-mono font-black text-blue-600 text-sm">{selectedEmp.taxableIncome.toLocaleString('vi-VN')} ₫</p>
+                    </div>
+                    <div className="p-4 bg-red-50/30 rounded-2xl border border-red-100">
+                      <p className="text-[9px] text-red-400 font-black uppercase mb-1">Tổng giảm trừ</p>
+                      <p className="font-mono font-black text-red-600 text-sm">{selectedEmp.totalDeduction.toLocaleString('vi-VN')} ₫</p>
+                    </div>
+                    <div className="p-4 bg-green-50/30 rounded-2xl border border-green-100">
+                      <p className="text-[9px] text-agribank-green font-black uppercase mb-1">TN Tính thuế</p>
+                      <p className="font-mono font-black text-agribank-green text-sm">{selectedEmp.netTaxableIncome.toLocaleString('vi-VN')} ₫</p>
                     </div>
                   </div>
 
@@ -282,9 +299,6 @@ export default function IncomePage() {
                       {selectedEmp.taxAmount.toLocaleString('vi-VN')}
                       <span className="text-xl ml-1 font-sans">₫</span>
                     </h3>
-                    <div className="mt-6 px-6 py-2 bg-agribank-maroon text-white text-[10px] font-black rounded-full uppercase tracking-widest shadow-lg shadow-agribank-maroon/20">
-                      Tính toán theo biểu thuế lũy tiến từng phần
-                    </div>
                   </div>
                 </div>
               </div>
@@ -301,9 +315,13 @@ export default function IncomePage() {
                 <div className="p-8">
                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                       {Object.entries(selectedEmp.income).map(([key, val]: any) => val > 0 && (
-                        <div key={key} className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                          <p className="text-[10px] font-black text-gray-400 uppercase mb-1">{key}</p>
-                          <p className="font-mono font-black text-gray-700">{val.toLocaleString('vi-VN')} ₫</p>
+                        <div key={key} className={`p-4 rounded-2xl border transition-all ${
+                          key === categoryCode 
+                          ? 'bg-agribank-maroon text-white border-agribank-maroon shadow-lg shadow-agribank-maroon/20 scale-105 ring-4 ring-agribank-maroon/10 z-10' 
+                          : 'bg-gray-50 border-gray-100 text-gray-700'
+                        }`}>
+                          <p className={`text-[10px] font-black uppercase mb-1 ${key === categoryCode ? 'text-white/60' : 'text-gray-400'}`}>{key}</p>
+                          <p className="font-mono font-black">{val.toLocaleString('vi-VN')} ₫</p>
                         </div>
                       ))}
                    </div>
