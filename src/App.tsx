@@ -12,7 +12,9 @@ import {
   LogOut,
   Menu,
   X,
-  ChevronRight
+  ChevronRight,
+  History,
+  BarChart3
 } from 'lucide-react';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -20,6 +22,8 @@ import UploadPage from './pages/UploadPage';
 import IncomePage from './pages/IncomePage';
 import ExportPage from './pages/ExportPage';
 import EmployeePage from './pages/EmployeePage';
+import HistoryPage from './pages/HistoryPage';
+import StatisticsPage from './pages/StatisticsPage';
 import logo from './assets/logo-agribank.jpg';
 
 const Logo = ({ className = "w-10 h-10" }) => (
@@ -50,6 +54,8 @@ const MainLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { to: '/upload', icon: Upload, label: 'Upload Dữ liệu' },
     { to: '/income', icon: Users, label: 'Tra cứu Thu nhập' },
     { to: '/employees', icon: Building2, label: 'Quản lý Cán bộ' },
+    { to: '/history', icon: History, label: 'Lịch sử Upload' },
+    { to: '/stats', icon: BarChart3, label: 'Thống kê Thu nhập' },
     { to: '/tax', icon: FileDown, label: 'Báo cáo Thuế' },
   ];
 
@@ -170,6 +176,8 @@ export default function App() {
           <Route path="/upload" element={<PrivateRoute><UploadPage /></PrivateRoute>} />
           <Route path="/income" element={<PrivateRoute><IncomePage /></PrivateRoute>} />
           <Route path="/employees" element={<PrivateRoute><EmployeePage /></PrivateRoute>} />
+          <Route path="/history" element={<PrivateRoute><HistoryPage /></PrivateRoute>} />
+          <Route path="/stats" element={<PrivateRoute><StatisticsPage /></PrivateRoute>} />
           <Route path="/tax" element={<PrivateRoute><ExportPage /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

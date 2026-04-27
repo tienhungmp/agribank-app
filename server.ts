@@ -56,12 +56,27 @@ const IncomeTransaction = sequelize.define("IncomeTransaction", {
   year: { type: DataTypes.INTEGER, allowNull: false },
   description: { type: DataTypes.TEXT },
   source: { type: DataTypes.STRING, defaultValue: "Excel Upload" },
+  uploadLogId: { type: DataTypes.STRING },
+});
+
+const UploadLog = sequelize.define("UploadLog", {
+  id: { type: DataTypes.STRING, primaryKey: true },
+  month: { type: DataTypes.INTEGER, allowNull: false },
+  year: { type: DataTypes.INTEGER, allowNull: false },
+  branchCode: { type: DataTypes.STRING(4), allowNull: false },
+  uploadedBy: { type: DataTypes.STRING, allowNull: false },
+  recordCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+  fileName: { type: DataTypes.STRING },
 });
 
 const TaxConfig = sequelize.define("TaxConfig", {
   key: { type: DataTypes.STRING, primaryKey: true },
   value: { type: DataTypes.DECIMAL(18, 4), allowNull: false },
 });
+
+// Associations
+IncomeTransaction.belongsTo(Employee, { foreignKey: 'accountNumber' });
+Employee.hasMany(IncomeTransaction, { foreignKey: 'accountNumber' });
 
 // --- INITIALIZE DATABASE ---
 async function initDB() {
@@ -100,8 +115,14 @@ async function initDB() {
       await sequelize.query("ALTER TABLE IncomeTransactions ADD COLUMN categoryCode TEXT");
       console.log("Added missing 'categoryCode' column to IncomeTransactions");
     }
+
+    const hasUploadLogId = tableInfo[0].some((col: any) => col.name === 'uploadLogId');
+    if (!hasUploadLogId) {
+      await sequelize.query("ALTER TABLE IncomeTransactions ADD COLUMN uploadLogId TEXT");
+      console.log("Added missing 'uploadLogId' column to IncomeTransactions");
+    }
   } catch (err) {
-    console.error("Error checking/adding 'source' column:", err);
+    console.error("Error checking/adding columns:", err);
   }
   
   // Seed Branches
@@ -324,7 +345,6 @@ async function startServer() {
     }
   });
 
-  // Bulk Save Transactions after review
   app.post("/api/transactions/bulk", authenticate, async (req: any, res) => {
     try {
       const { rows, month, year } = req.body;
@@ -332,6 +352,18 @@ async function startServer() {
 
       let successCount = 0;
       const source = "Excel Review Upload";
+      const logId = `UP-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+
+      // Create Upload Log
+      await (UploadLog as any).create({
+        id: logId,
+        month,
+        year,
+        branchCode: req.user.branchCode || "4600",
+        uploadedBy: req.user.username,
+        recordCount: rows.length,
+        fileName: `Upload_${month}_${year}`
+      });
 
       for (const row of rows) {
         const { fullName, accountNumber, amountTaxable, content, dateOccurred, categoryCode } = row;
@@ -373,18 +405,80 @@ async function startServer() {
           month,
           year,
           description: content || `Kết chuyển ${month}/${year}`,
-          source
+          source,
+          uploadLogId: logId
         });
 
         successCount++;
       }
 
-      res.json({ successCount });
+      res.json({ successCount, logId });
     } catch (err: any) {
       res.status(500).json({ message: "Lỗi lưu dữ liệu: " + err.message });
     }
   });
 
+  // History Endpoints
+  app.get("/api/history/uploads", authenticate, async (req: any, res) => {
+    try {
+      const { month, year } = req.query;
+      const where: any = {};
+      if (month && month !== 'all') where.month = parseInt(month as string);
+      if (year && year !== 'all') where.year = parseInt(year as string);
+      
+      if (req.user.role !== "admin") {
+        where.branchCode = req.user.branchCode;
+      }
+
+      const logs = await UploadLog.findAll({ 
+        where,
+        order: [['createdAt', 'DESC']]
+      });
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/history/uploads/:id", authenticate, async (req, res) => {
+    try {
+      const transactions = await IncomeTransaction.findAll({
+        where: { uploadLogId: req.params.id },
+        include: [{ model: Employee, attributes: ['fullName'] }]
+      });
+      // Flatten the fullName into the object for the frontend
+      const flatTransactions = transactions.map((t: any) => {
+        const plain = t.get({ plain: true });
+        return {
+          ...plain,
+          fullName: plain.Employee?.fullName || "N/A"
+        };
+      });
+      res.json(flatTransactions);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/history/employee/:accountNumber", authenticate, async (req, res) => {
+    try {
+      const transactions = await IncomeTransaction.findAll({
+        where: { accountNumber: req.params.accountNumber },
+        order: [['transactionDate', 'DESC']],
+        include: [{ model: Employee, attributes: ['fullName'] }]
+      });
+      const flatTransactions = transactions.map((t: any) => {
+        const plain = t.get({ plain: true });
+        return {
+          ...plain,
+          fullName: plain.Employee?.fullName || "N/A"
+        };
+      });
+      res.json(flatTransactions);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
   // Tax Calculation & Summary
   app.get("/api/tax/summary", authenticate, async (req: any, res) => {
     try {
@@ -801,6 +895,112 @@ async function startServer() {
       res.setHeader("Content-Disposition", `attachment; filename=${branchCode || "BKTN"}_${isYearly ? `Nam${year}` : `Thang${month}_Nam${year}`}.xlsx`);
       await workbook.xlsx.write(res);
       res.end();
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Statistics
+  app.get("/api/stats/income-summary", authenticate, async (req: any, res) => {
+    try {
+      const { month, year, branchCode, categoryCode } = req.query;
+      
+      const where: any = {
+        month: parseInt(month as string),
+        year: parseInt(year as string),
+      };
+
+      if (categoryCode && categoryCode !== 'all') {
+        where.categoryCode = categoryCode;
+      }
+
+      if (branchCode && branchCode !== 'all') {
+        where.branchCode = branchCode;
+      }
+      
+      // If user is not admin, restrict to their branch
+      if (req.user.role !== "admin") {
+        where.branchCode = req.user.branchCode || "4600";
+      }
+
+      // Count unique employees and sum amount
+      const stats = await IncomeTransaction.findAll({
+        attributes: [
+          [sequelize.fn('SUM', sequelize.col('amountTaxable')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('accountNumber'))), 'employeeCount']
+        ],
+        where
+      });
+
+      const result = stats[0].get({ plain: true });
+      res.json({
+        totalAmount: parseFloat(result.totalAmount) || 0,
+        employeeCount: result.employeeCount || 0
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Get detailed stats per branch (for comparison)
+  app.get("/api/stats/branches-breakdown", authenticate, async (req: any, res) => {
+    if (req.user.role !== "admin") return res.status(403).json({ message: "Từ chối truy cập" });
+    
+    try {
+      const { month, year, categoryCode } = req.query;
+      const where: any = {
+        month: parseInt(month as string),
+        year: parseInt(year as string),
+      };
+      if (categoryCode && categoryCode !== 'all') where.categoryCode = categoryCode;
+
+      const breakdown = await IncomeTransaction.findAll({
+        attributes: [
+          'branchCode',
+          [sequelize.fn('SUM', sequelize.col('amountTaxable')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('accountNumber'))), 'employeeCount']
+        ],
+        where,
+        group: ['branchCode']
+      });
+
+      res.json(breakdown);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Detailed search for reports
+  app.get("/api/stats/income-details", authenticate, async (req: any, res) => {
+    try {
+      const { month, year, branchCode, categoryCode } = req.query;
+      const where: any = {
+        month: parseInt(month as string),
+        year: parseInt(year as string),
+      };
+
+      if (categoryCode && categoryCode !== 'all') where.categoryCode = categoryCode;
+      if (branchCode && branchCode !== 'all') where.branchCode = branchCode;
+      
+      if (req.user.role !== "admin") {
+        where.branchCode = req.user.branchCode || "4600";
+      }
+
+      const transactions = await IncomeTransaction.findAll({
+        where,
+        include: [{ model: Employee, attributes: ['fullName'] }],
+        order: [['amountTaxable', 'DESC']]
+      });
+
+      const flat = transactions.map((t: any) => {
+        const plain = t.get({ plain: true });
+        return {
+          ...plain,
+          fullName: plain.Employee?.fullName || "N/A"
+        };
+      });
+
+      res.json(flat);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
